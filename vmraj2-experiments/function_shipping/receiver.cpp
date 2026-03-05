@@ -24,6 +24,7 @@
 
 #include <wasmtime.h>
 #include <wasm.h>
+#include <wasi.h>
 
 // ---- Networking helpers ----
 
@@ -83,7 +84,13 @@ bool execute_wasm(const std::vector<uint8_t>& wasm_bytes,
 
     if (error || !module) {
         fprintf(stderr, "[receiver] Failed to compile wasm module\n");
-        if (error) wasmtime_error_delete(error);
+        if (error) {
+            wasm_message_t msg;
+            wasmtime_error_message(error, &msg);
+            fprintf(stderr, "[receiver] Compile error: %.*s\n", (int)msg.size, msg.data);
+            wasm_byte_vec_delete(&msg);
+            wasmtime_error_delete(error);
+        }
         wasmtime_store_delete(store);
         wasm_engine_delete(engine);
         return false;
@@ -92,12 +99,50 @@ bool execute_wasm(const std::vector<uint8_t>& wasm_bytes,
     printf("[receiver] Module compiled in %.3f ms (%zu bytes)\n",
            compile_ms, wasm_bytes.size());
 
-    // Instantiate the module
+    // Create a linker and define WASI imports
+    wasmtime_linker_t* linker = wasmtime_linker_new(engine);
+
+    error = wasmtime_linker_define_wasi(linker);
+    if (error) {
+        fprintf(stderr, "[receiver] Failed to define WASI in linker\n");
+        wasm_message_t msg;
+        wasmtime_error_message(error, &msg);
+        fprintf(stderr, "[receiver] WASI error: %.*s\n", (int)msg.size, msg.data);
+        wasm_byte_vec_delete(&msg);
+        wasmtime_error_delete(error);
+        wasmtime_linker_delete(linker);
+        wasmtime_module_delete(module);
+        wasmtime_store_delete(store);
+        wasm_engine_delete(engine);
+        return false;
+    }
+
+    // Configure WASI on the store context
+    wasi_config_t* wasi_config = wasi_config_new();
+    wasi_config_inherit_stdout(wasi_config);
+    wasi_config_inherit_stderr(wasi_config);
+
+    error = wasmtime_context_set_wasi(context, wasi_config);
+    if (error) {
+        fprintf(stderr, "[receiver] Failed to set WASI context\n");
+        wasm_message_t msg;
+        wasmtime_error_message(error, &msg);
+        fprintf(stderr, "[receiver] WASI context error: %.*s\n", (int)msg.size, msg.data);
+        wasm_byte_vec_delete(&msg);
+        wasmtime_error_delete(error);
+        wasmtime_linker_delete(linker);
+        wasmtime_module_delete(module);
+        wasmtime_store_delete(store);
+        wasm_engine_delete(engine);
+        return false;
+    }
+
+    // Instantiate the module through the linker
     auto t_inst_start = std::chrono::steady_clock::now();
 
     wasmtime_instance_t instance;
     wasm_trap_t* trap = nullptr;
-    error = wasmtime_instance_new(context, module, nullptr, 0, &instance, &trap);
+    error = wasmtime_linker_instantiate(linker, context, module, &instance, &trap);
 
     auto t_inst_end = std::chrono::steady_clock::now();
     double inst_ms = std::chrono::duration<double, std::milli>(
@@ -105,8 +150,21 @@ bool execute_wasm(const std::vector<uint8_t>& wasm_bytes,
 
     if (error || trap) {
         fprintf(stderr, "[receiver] Failed to instantiate module\n");
-        if (error) wasmtime_error_delete(error);
-        if (trap) wasm_trap_delete(trap);
+        if (error) {
+            wasm_message_t msg;
+            wasmtime_error_message(error, &msg);
+            fprintf(stderr, "[receiver] Instantiation error: %.*s\n", (int)msg.size, msg.data);
+            wasm_byte_vec_delete(&msg);
+            wasmtime_error_delete(error);
+        }
+        if (trap) {
+            wasm_message_t msg;
+            wasm_trap_message(trap, &msg);
+            fprintf(stderr, "[receiver] Instantiation trap: %.*s\n", (int)msg.size, msg.data);
+            wasm_byte_vec_delete(&msg);
+            wasm_trap_delete(trap);
+        }
+        wasmtime_linker_delete(linker);
         wasmtime_module_delete(module);
         wasmtime_store_delete(store);
         wasm_engine_delete(engine);
@@ -123,6 +181,7 @@ bool execute_wasm(const std::vector<uint8_t>& wasm_bytes,
     if (!found || func_extern.kind != WASMTIME_EXTERN_FUNC) {
         fprintf(stderr, "[receiver] Export '%s' not found or not a function\n",
                 func_name.c_str());
+        wasmtime_linker_delete(linker);
         wasmtime_module_delete(module);
         wasmtime_store_delete(store);
         wasm_engine_delete(engine);
@@ -146,8 +205,21 @@ bool execute_wasm(const std::vector<uint8_t>& wasm_bytes,
 
     if (error || trap) {
         fprintf(stderr, "[receiver] Function call failed\n");
-        if (error) wasmtime_error_delete(error);
-        if (trap) wasm_trap_delete(trap);
+        if (error) {
+            wasm_message_t msg;
+            wasmtime_error_message(error, &msg);
+            fprintf(stderr, "[receiver] Call error: %.*s\n", (int)msg.size, msg.data);
+            wasm_byte_vec_delete(&msg);
+            wasmtime_error_delete(error);
+        }
+        if (trap) {
+            wasm_message_t msg;
+            wasm_trap_message(trap, &msg);
+            fprintf(stderr, "[receiver] Call trap: %.*s\n", (int)msg.size, msg.data);
+            wasm_byte_vec_delete(&msg);
+            wasm_trap_delete(trap);
+        }
+        wasmtime_linker_delete(linker);
         wasmtime_module_delete(module);
         wasmtime_store_delete(store);
         wasm_engine_delete(engine);
@@ -162,6 +234,7 @@ bool execute_wasm(const std::vector<uint8_t>& wasm_bytes,
            compile_ms, inst_ms, exec_ms);
 
     // Cleanup
+    wasmtime_linker_delete(linker);
     wasmtime_module_delete(module);
     wasmtime_store_delete(store);
     wasm_engine_delete(engine);
