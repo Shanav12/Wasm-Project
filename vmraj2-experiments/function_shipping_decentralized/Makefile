@@ -6,11 +6,11 @@
 
 # ---- Toolchains ----
 CXX        = g++
-WASI_CXX   = /opt/wasi-sdk-30.0-x86_64-macos/bin/clang++
+WASI_CXX   = ~/wasi-sdk
 
 # ---- Wasmtime C API paths ----
 # Adjust if you installed wasmtime-c-api elsewhere
-WASMTIME_DIR = /opt/wasmtime-v42.0.1-aarch64-macos-c-api
+WASMTIME_DIR = ~/wasmtime-c-api
 WASMTIME_INC = $(WASMTIME_DIR)/include
 WASMTIME_LIB = $(WASMTIME_DIR)/lib
 
