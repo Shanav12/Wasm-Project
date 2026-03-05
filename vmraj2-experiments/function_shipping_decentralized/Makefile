@@ -6,11 +6,11 @@
 
 # ---- Toolchains ----
 CXX        = g++
-WASI_CXX   = ~/wasi-sdk
+WASI_CXX   = $(HOME)/wasi-sdk/bin/clang++
 
 # ---- Wasmtime C API paths ----
 # Adjust if you installed wasmtime-c-api elsewhere
-WASMTIME_DIR = ~/wasmtime-c-api
+WASMTIME_DIR = $(HOME)/wasmtime-c-api
 WASMTIME_INC = $(WASMTIME_DIR)/include
 WASMTIME_LIB = $(WASMTIME_DIR)/lib
 
