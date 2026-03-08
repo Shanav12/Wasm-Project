@@ -59,12 +59,13 @@ struct FunctionEntry {
 };
 
 static const std::map<std::string, FunctionEntry> FUNCTION_DIRECTORY = {
-    {"factorial", {"programs/factorial.wasm", "factorial", "127.0.0.1", 8080}},
-    {"fib",       {"programs/fib.wasm",       "fib",       "127.0.0.1", 8080}},
-    {"prime",     {"programs/prime.wasm",      "isPrime",   "127.0.0.1", 8081}},
+    {"factorial", {"programs/factorial.wasm", "factorial", "sp26-cs525-1801.cs.illinois.edu", 8080}},
+    {"fib",       {"programs/fib.wasm",       "fib",       "sp26-cs525-1801.cs.illinois.edu", 8080}},
+    {"prime",     {"programs/prime.wasm",      "isPrime",   "sp26-cs525-1802.cs.illinois.edu", 8080}},
 };
 
 static int MY_PORT = -1;  // set once in main() before server starts
+static std::string MY_HOST = "sp26-cs525-1801.cs.illinois.edu";
 
 // ---- File I/O ---------------------------------------------------------------
 
@@ -82,7 +83,10 @@ static std::vector<uint8_t> read_file(const std::string& path) {
 static bool execute_wasm(const std::vector<uint8_t>& wasm_bytes,
                          const std::string& func_name,
                          int32_t arg,
-                         int32_t* result)
+                         int32_t* result,
+			 double* compile_time_ms,
+			 double* instantiate_time_ms,
+			 double* exec_time_ms)
 {
     wasm_engine_t* engine = wasm_engine_new();
     if (!engine) {
@@ -100,6 +104,7 @@ static bool execute_wasm(const std::vector<uint8_t>& wasm_bytes,
         engine, wasm_bytes.data(), wasm_bytes.size(), &module);
     double compile_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - t0).count();
+    *compile_time_ms = compile_ms;
 
     if (error || !module) {
         if (error) {
@@ -157,6 +162,7 @@ static bool execute_wasm(const std::vector<uint8_t>& wasm_bytes,
     error = wasmtime_linker_instantiate(linker, context, module, &instance, &trap);
     double inst_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - t1).count();
+    *instantiate_time_ms = inst_ms;
 
     if (error || trap) {
         if (error) {
@@ -207,6 +213,7 @@ static bool execute_wasm(const std::vector<uint8_t>& wasm_bytes,
         context, &func_extern.of.func, params, 1, results, 1, &trap);
     double exec_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - t2).count();
+    *exec_time_ms = exec_ms;
 
     if (error || trap) {
         if (error) {
@@ -313,7 +320,7 @@ static void handle_invoke(const httplib::Request& req, httplib::Response& res) {
     }
 
     const FunctionEntry& entry    = it->second;
-    bool                 is_local = (entry.owner_port == MY_PORT);
+    bool                 is_local = (entry.owner_host == MY_HOST && entry.owner_port == MY_PORT);
 
     auto t_start = std::chrono::steady_clock::now();
 
@@ -344,7 +351,10 @@ static void handle_invoke(const httplib::Request& req, httplib::Response& res) {
         std::chrono::steady_clock::now() - t_start).count();
 
     int32_t result = 0;
-    if (!execute_wasm(wasm_bytes, entry.export_name, arg, &result)) {
+    double compile_ms;
+    double instantiate_ms;
+    double exec_ms;
+    if (!execute_wasm(wasm_bytes, entry.export_name, arg, &result, &compile_ms, &instantiate_ms, &exec_ms)) {
         res.status = 500;
         res.set_content(
             json{{"error", "wasm execution failed"}}.dump(),
@@ -362,6 +372,9 @@ static void handle_invoke(const httplib::Request& req, httplib::Response& res) {
     resp["arg"]      = arg;
     resp["timing_ms"] = {
         {"fetch",  is_local ? 0.0 : fetch_ms},
+	{"compile", compile_ms},
+	{"instantiate", instantiate_ms},
+	{"exec", exec_ms},
         {"total",  total_ms}
     };
     res.set_content(resp.dump(), "application/json");
@@ -396,7 +409,7 @@ static void handle_get_binary(const httplib::Request& req, httplib::Response& re
         return;
     }
 
-    if (it->second.owner_port != MY_PORT) {
+    if (it->second.owner_host != MY_HOST || it->second.owner_port != MY_PORT) {
         res.status = 403;
         res.set_content(
             json{{"error", "function not hosted on this node"}}.dump(),
