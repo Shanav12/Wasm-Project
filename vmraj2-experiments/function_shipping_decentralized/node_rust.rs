@@ -93,6 +93,7 @@ fn function_directory() -> HashMap<String, FunctionEntry> {
 
 #[derive(Clone)]
 struct AppState {
+    engine: Arc<Engine>,
     my_port: u16,
     my_host: String,
     functions: Arc<HashMap<String, FunctionEntry>>,
@@ -107,13 +108,12 @@ struct AppState {
 // This is intentionally synchronous — call it inside tokio::task::spawn_blocking.
 
 fn execute_wasm(
+    engine: Arc<Engine>,
     wasm_bytes: &[u8],
     func_name: &str,
     arg: i32,
     my_port: u16,
 ) -> Result<(i32, f64, f64, f64)> {
-    let engine = Engine::default();
-
     // Linker with WASI preview1 support
     let mut linker: Linker<WasiP1Ctx> = Linker::new(&engine);
     wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |t| t)?;
@@ -268,10 +268,11 @@ async fn handle_invoke(State(state): State<AppState>, body: String) -> Response 
     let fetch_ms = t_start.elapsed().as_secs_f64() * 1000.0;
 
     // Run WASM on a blocking thread (compilation is CPU-bound)
+    let engine = state.engine;
     let export_name = entry.export_name.clone();
     let my_port = state.my_port;
     let exec_result =
-        tokio::task::spawn_blocking(move || execute_wasm(&wasm_bytes, &export_name, arg, my_port))
+        tokio::task::spawn_blocking(move || execute_wasm(engine, &wasm_bytes, &export_name, arg, my_port))
             .await;
 
     let (result, compile_ms, inst_ms, exec_ms) = match exec_result {
@@ -396,7 +397,11 @@ async fn main() {
     }
     println!();
 
+    let mut config = Config::new();
+    config.strategy(Strategy::Winch)?;
+    let engine = Engine::default();
     let state = AppState {
+        engine,
         my_port,
         my_host,
         functions,
