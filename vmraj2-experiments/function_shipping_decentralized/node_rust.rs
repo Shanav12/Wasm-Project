@@ -398,10 +398,10 @@ async fn main() {
     println!();
 
     let mut config = Config::new();
-    config.strategy(Strategy::Winch)?;
+    config.strategy(Strategy::Winch);
     let engine = Engine::default();
     let state = AppState {
-        engine,
+        engine: Arc::new(engine),
         my_port,
         my_host,
         functions,
